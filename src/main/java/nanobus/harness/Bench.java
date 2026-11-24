@@ -27,6 +27,7 @@ import java.util.regex.Pattern;
 public final class Bench {
     private static final Map<String, List<String>> GC = Map.of(
             "G1", List.of("-XX:+UseG1GC"),
+            "G1-inline-housekeeping", List.of("-XX:+UseG1GC", "-Dnanobus.inlineHousekeeping=true"),
             "Parallel", List.of("-XX:+UseParallelGC"),
             "Shenandoah", List.of("-XX:+UseShenandoahGC"),
             "ZGC", List.of("-XX:+UseZGC"),

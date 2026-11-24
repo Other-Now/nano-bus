@@ -64,6 +64,8 @@ final class Journal implements AutoCloseable {
     final ProducerTable producers = new ProducerTable();
     final List<long[]> epochs = new ArrayList<>();   // (epoch, first seq written in it)
 
+    /** Only for the A/B in the benchmark: do the housekeeping on the event loop, as the first version did. */
+    private static final boolean INLINE = Boolean.getBoolean("nanobus.inlineHousekeeping");
     private static final int MAX_SCAN = 4096;        // records visited per read()
 
     private final Path dir;
@@ -184,14 +186,15 @@ final class Journal implements AutoCloseable {
         List<Segment> old = new ArrayList<>();
         while (segs.size() > maxSegments) old.add(segs.remove(0));
         for (Segment s : old) s.ch.close();
-        housekeeper.execute(() -> {
+        Runnable work = () -> {
             try {
                 writeSnap(base, snap);
                 for (Segment s : old) deleteFiles(s.base);
             } catch (IOException e) {
                 housekeepingError = e;
             }
-        });
+        };
+        if (INLINE) work.run(); else housekeeper.execute(work);
         if (housekeepingError != null) throw housekeepingError;
     }
 

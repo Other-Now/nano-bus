@@ -2,6 +2,7 @@ name: ci
 
 on:
   push:
+    paths-ignore: ["**.md", "results/**", "docs/**"]
   pull_request:
   workflow_dispatch:
 
@@ -58,6 +59,7 @@ jobs:
           - { tag: latency, args: "--rates 50000,100000,200000,300000,500000 --seconds 20 --reps 3" }
           - { tag: latency-solo, args: "--rates 100000,300000,500000 --seconds 20 --reps 2 --solo" }
           - { tag: latency-fsync, args: "--rates 20000,100000 --seconds 20 --fsync" }
+          - { tag: roll-ab, args: "--rates 100000,300000 --seconds 20 --reps 4 --gcs G1,G1-inline-housekeeping" }
           - { tag: gc-heapcache, args: "--rates 100000 --seconds 30 --warmup 18 --reps 3 --gcs G1,Parallel,Shenandoah,ZGC,GenZGC --heap 1g --heap-cache 1000000" }
           - { tag: gc-offheap, args: "--rates 100000 --seconds 30 --warmup 10 --reps 2 --gcs G1,Parallel,Shenandoah,ZGC,GenZGC --heap 1g" }
     name: bench ${{ matrix.tag }}
