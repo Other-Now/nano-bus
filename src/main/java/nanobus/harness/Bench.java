@@ -31,6 +31,8 @@ public final class Bench {
             "Shenandoah", List.of("-XX:+UseShenandoahGC"),
             "ZGC", List.of("-XX:+UseZGC"),
             "GenZGC", List.of("-XX:+UseZGC", "-XX:+ZGenerational"));
+    /** ZGC stops an allocating thread (not the world) when it cannot free memory fast enough. */
+    private static final Pattern STALL = Pattern.compile("Allocation Stall .* ([0-9.]+)ms");
     private static final Pattern PAUSE = Pattern.compile("Pause.* ([0-9.]+)ms");
 
     public static int run(Args a) throws Exception {
@@ -40,7 +42,7 @@ public final class Bench {
         int shards = a.num("shards", 1), cache = a.num("heap-cache", 0), reps = a.num("reps", 1);
         boolean solo = a.flag("solo"), spin = a.flag("spin"), fsync = a.flag("fsync");
         String heap = a.str("heap", "256m"), tag = a.str("tag", "latency");
-        StringBuilder md = new StringBuilder("| GC | rate/s | achieved/s | p50 us | p99 us | p99.9 us | max ms | broker B/msg | GCs | longest GC pause ms | GC pause total ms |\n|---|---|---|---|---|---|---|---|---|---|---|\n");
+        StringBuilder md = new StringBuilder("| GC | rate/s | achieved/s | p50 us | p99 us | p99.9 us | max ms | broker B/msg | GCs | longest GC pause ms | GC pause total ms | alloc stalls (longest ms) |\n|---|---|---|---|---|---|---|---|---|---|---|---|\n");
         String floor = floor();
         System.out.println(floor);
         for (int rep = 0; rep < reps; rep++) {
@@ -147,10 +149,10 @@ public final class Bench {
             double[] p = pauses(dir.resolve("gc-A.log"), warm);
             pub.close();
             sub.close();
-            return String.format(Locale.ROOT, "| %s | %d | %.0f%s | %.0f | %.0f | %.0f | %.1f | %.2f | %.0f | %.2f | %.1f |", gc, rate,
+            return String.format(Locale.ROOT, "| %s | %d | %.0f%s | %.0f | %.0f | %.0f | %.1f | %.2f | %.0f | %.2f | %.1f | %.0f (%.1f) |", gc, rate,
                     h.getTotalCount() / (double) seconds, h.getTotalCount() < expect * 0.99 || lag > rate / 10 ? " (saturated)" : "",
                     h.getValueAtPercentile(50) / 1e3, h.getValueAtPercentile(99) / 1e3, h.getValueAtPercentile(99.9) / 1e3,
-                    h.getMaxValue() / 1e6, (b1[1] - b0[1]) / msgs, b1[2] - b0[2], p[0], p[1])
+                    h.getMaxValue() / 1e6, (b1[1] - b0[1]) / msgs, b1[2] - b0[2], p[0], p[1], p[2], p[3])
                     + (gcs > 0 ? " (load generator had " + gcs + " GCs)" : "");
         }
     }
@@ -178,8 +180,13 @@ public final class Bench {
 
     /** Longest and total stop-the-world GC pause, after warm-up, from the unified GC log. */
     private static double[] pauses(Path log, int warm) throws Exception {
-        double max = 0, sum = 0;
+        double max = 0, sum = 0, stalls = 0, longest = 0;
         for (String l : Files.readAllLines(log)) {
+            Matcher a = STALL.matcher(l);
+            if (a.find() && Double.parseDouble(l.substring(1, l.indexOf('s'))) >= warm) {
+                stalls++;
+                longest = Math.max(longest, Double.parseDouble(a.group(1)));
+            }
             Matcher m = PAUSE.matcher(l);
             if (l.contains("[safepoint") || l.contains("gc,start") || !m.find()) continue;
             double up = Double.parseDouble(l.substring(1, l.indexOf('s')));
@@ -188,6 +195,6 @@ public final class Bench {
             max = Math.max(max, ms);
             sum += ms;
         }
-        return new double[]{max, sum};
+        return new double[]{max, sum, stalls, longest};
     }
 }
