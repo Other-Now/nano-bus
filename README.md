@@ -120,7 +120,7 @@ pauses, so "short pauses" alone is not a latency result.
   rising, 0 subscribers) → native memory tracking (`Other`) → two class histograms (`Conn` 5.6 times as many) → JFR
   old-object sample, whose reference chain ends in `Shard.sessionsById`. Output:
   [results/ci/leak/REPORT.txt](results/ci/leak/REPORT.txt).
-- Without any leak, allocating direct buffers per connection still reached 172 MB, because a broker that hardly
+- Without any leak, allocating direct buffers per connection still swung up to 232 MB, because a broker that hardly
   allocates hardly ever GCs, and only a GC frees direct buffers. Pooling them keeps it flat at 17 MB.
 
 ### Alerting
