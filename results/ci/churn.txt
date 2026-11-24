@@ -1,0 +1,29 @@
+== --leak --tag churn-leak
+broker pid 2489
+0,1,7.0,16.6,7,0,0
+5,301,7.5,166.6,607,1,0
+broker died after 480 connections, 9 s
+java.lang.OutOfMemoryError: Cannot reserve 262144 bytes of direct buffer memory (allocated: 268255336, limit: 268435456)
+12:27:36.217 [A] fatal in shard 0: java.lang.OutOfMemoryError: Cannot reserve 262144 bytes of direct buffer memory (allocated: 268255336, limit: 268435456) - exiting so the standby can take over
+== --pool off --tag churn-nopool
+broker pid 2563
+0,1,7.0,17.6,11,0,0
+5,301,2.8,21.6,27,1,0
+10,601,9.8,171.6,627,1,0
+15,901,5.8,82.1,269,2,0
+20,1201,7.0,116.6,407,3,0
+25,1501,6.9,136.6,487,4,0
+30,1801,6.9,134.1,477,5,0
+35,2101,5.9,128.6,455,6,0
+40,2401,6.9,120.6,423,7,0
+== --tag churn-pooled
+broker pid 2648
+0,1,7.0,16.6,7,0,0
+5,301,13.0,17.1,9,1,0
+10,601,9.8,17.1,9,1,0
+15,901,15.8,17.1,9,1,0
+20,1201,22.8,17.1,9,1,0
+25,1501,28.8,17.1,9,2,0
+30,1801,9.0,17.1,9,2,0
+35,2101,15.0,17.1,9,2,0
+40,2401,22.0,17.1,9,2,0

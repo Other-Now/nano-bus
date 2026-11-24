@@ -1,0 +1,60 @@
+== 1. metrics: heap is flat, direct memory is not, and no subscriber is connected
+nanobus_subscribers{shard="0"}                      0 -> 0
+jvm_heap_used_bytes                           5635544 -> 9229600
+jvm_heap_max_bytes                           67108864 -> 67108864
+jvm_direct_used_bytes                        41533535 -> 148488287
+jvm_direct_buffers                                 99 -> 507
+
+== 2. native memory tracking: which JVM category grew (direct buffers are in Other)
+Java Heap    committed    24576 KB ->    24576 KB
+Other        committed    40592 KB ->   144528 KB
+Thread       committed     9303 KB ->     9319 KB
+Class        committed     1026 KB ->     1026 KB
+
+== 3. live objects that grew between two full GCs (count early -> late, shallow bytes late)
+[J                                                       102 ->     510    4089928 B
+java.nio.DirectByteBuffer                                103 ->     511      32704 B
+[Ljdk.internal.vm.FillerElement;                           0 ->     122      31976 B
+sun.nio.ch.SocketChannelImpl                              46 ->     250      28000 B
+nanobus.Conn                                              45 ->     249      25896 B
+java.lang.Object                                         601 ->    1420      22720 B
+jdk.internal.ref.Cleaner                                  95 ->     503      20120 B
+java.util.concurrent.locks.ReentrantLock$NonfairSync     133 ->     541      17312 B
+java.net.InetAddress$InetAddressHolder                   102 ->     510      16320 B
+java.nio.DirectByteBuffer$Deallocator                     95 ->     503      16096 B
+java.lang.Long                                           423 ->     546      13104 B
+java.net.Inet4Address                                     98 ->     506      12144 B
+
+== 4. JFR old object samples: who holds them
+111
+jdk.OldObjectSample {
+  startTime = 12:29:49.099 (2026-11-24)
+  duration = 8.24 ms
+  allocationTime = 12:29:34.698 (2026-11-24)
+  objectSize = 8.0 kB
+  objectAge = 14.4 s
+  lastKnownHeapUsage = 8.4 MB
+  object =  [
+    long[1024]
+    ackLog : nanobus.Conn
+    val : java.util.concurrent.ConcurrentHashMap$Node
+    [238] : java.util.concurrent.ConcurrentHashMap$Node[512]
+    table : java.util.concurrent.ConcurrentHashMap
+    sessionsById : nanobus.Shard
+  ]
+  arrayElements = 1024
+  root = {
+    description = "Thread Name: shard-0"
+    system = "Threads"
+    type = "Stack Variable"
+  }
+  eventThread = "shard-0" (javaThreadId = 25)
+  stackTrace = [
+    nanobus.Conn.<init>(long, SocketChannel, ByteBuffer, ByteBuffer) line: 24
+    nanobus.Shard.newConn(SocketChannel) line: 382
+    nanobus.Shard.accept() line: 373
+    nanobus.Shard.onKey(SelectionKey) line: 356
+    sun.nio.ch.SelectorImpl.processReadyEvents(int, SelectionKeyImpl, Consumer) line: 297
+  ]
+}
+

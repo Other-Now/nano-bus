@@ -1,0 +1,17 @@
+killed    commit does not wait for the standby
+killed    subscribers see uncommitted records
+killed    no producer dedup
+killed    rejoining node keeps its divergent tail
+killed    standby is in sync as soon as it connects
+killed    lost standby is released without telling the witness
+killed    witness promotes a stale node
+killed    witness ignores the lease
+killed    witness accepts a late ADD
+killed    witness forgets the set on restart
+killed    takeover keeps the old eligible set
+killed    recovery skips the CRC
+killed    torn tail is not cut
+killed    truncation ignores the epoch boundary
+killed    producers are forgotten with their segment
+killed    flush is skipped timeout
+16/16 killed

@@ -1,0 +1,5 @@
+healthy cluster under load: no alert firing
+StalledPublisher:md.NSE fired 14903 ms after the fault
+ConsumerLagging fired 17064 ms after the fault
+StandbyOutOfSync fired 16420 ms after the fault
+NoLeader fired 5873 ms after the fault

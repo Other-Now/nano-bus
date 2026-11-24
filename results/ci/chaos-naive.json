@@ -1,0 +1,4 @@
+{"mode":"naive","seconds":90,"rate":20000,"kills":29,"pauses":5,"acked":1867188,"resent_frames_bytes":7166112,
+ "lost":[150902,150902],"duplicated":[0,0],"reordered":[0,0],"corrupt":0,"subscribers_agree":true,
+ "producer_gaps":0,"truncated_committed":0,"journals":"identical, 1716286 records",
+ "failover_ms":[377,378,393,396,413,414,417,436,458,464],"paused_leader_stall_ms":[512,512,513,514,514],"standby_kill_stall_ms":[3,3,4,5,5]}
