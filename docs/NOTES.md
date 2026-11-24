@@ -47,17 +47,17 @@ producer sequences are the idempotent producer (KIP-98), and `pump` from the log
 
 ## The five stories
 
-1. **The tail that was `unlink()`.** p99 grew with the rate, and p99.9 was close to 10 ms with the CPU mostly idle. The
-   fraction of slow messages matched (segment rolls per second) x (about 10 ms). Timed the roll: 2.3–5 ms to unlink plus
+1. **The tail that was `unlink()`.** p99 grew with the rate, and p99.9 sat near 9-11 ms. The
+   fraction of slow messages matched (segment rolls per second) x (a roll on each of two nodes). Timed the roll: 2.3–5 ms to unlink plus
    0.5–1.9 ms for snapshot and create, on both nodes. Moved off the event loop, keeping the order "successor's
    snapshot first, then delete", because recovery starts from the oldest snapshot. Proved it by an interleaved A/B on one machine.
-2. **My harness was the tail.** Before that, p99.9 was 96 ms in every run. Max was about 100 ms, so I suspected the
+2. **My harness was the tail.** Before that, p99.9 was about 100 ms in every run. Max was about 100 ms, so I suspected the
    100 ms heartbeat and changed it to 25 ms: no effect. One 100 ms stall per run gives exactly p99 ≈ 27 ms. It was the cold
    HTTP metrics scrape on the publishing thread. After: 4.5 ms.
 3. **A control that could not fail.** With producer dedup switched off, the first chaos runs still had 0 duplicates. The
    reconnect handshake tells the publisher what is committed, so it had nothing to resend. Only with that off too
    did duplicates appear (73). A control that never fails proves nothing, so the harness exits non-zero if it does not.
-4. **The off-heap leak.** Heap 8 of 64 MB and yet OutOfMemoryError. See README, finding 3. The related real problem: a
+4. **The off-heap leak.** Heap under 13 of 64 MB and yet OutOfMemoryError. See README, finding 3. The related real problem: a
    zero-allocation broker never runs GC, and only GC frees direct buffers, so they had to be pooled.
 5. **A short frame could kill the broker.** The malformed-frame test showed that a frame shorter than its type needs
    read past its end; the exception ended the shard thread and the process. Fixed with a minimum length per type.
