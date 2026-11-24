@@ -450,7 +450,8 @@ final class Shard implements Runnable {
                 for (Conn o : conns) if (o != c && o.kind == Conn.PUB && o.producer.id == id) close(o);
                 c.kind = Conn.PUB;
                 c.producer = journal.producers.get(id);
-                if (c.producer.lastPseq > 0) c.pushAck(c.producer.lastLogSeq, c.producer.lastPseq);
+                // Tells a resuming publisher what is already committed, so it usually has nothing to resend.
+                if (cfg.dedup && c.producer.lastPseq > 0) c.pushAck(c.producer.lastLogSeq, c.producer.lastPseq);
                 frame(c.out, HELLO_OK, 12);
                 c.out.putInt(role.epoch).putLong(c.producer.lastPseq);
             }

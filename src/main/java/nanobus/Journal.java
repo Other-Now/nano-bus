@@ -9,6 +9,8 @@ import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.zip.CRC32C;
 
 import static java.nio.file.StandardOpenOption.CREATE;
@@ -26,14 +28,13 @@ import static nanobus.Proto.*;
 final class Journal implements AutoCloseable {
     static final class Segment {
         final long base;             // seq of its first record
-        final Path file;
         final FileChannel ch;
         int size;                    // valid bytes
         private int lastIdxPos = -(1 << 20);
         private long[] idx = new long[64];   // sparse index: pairs (seq, pos), one per 64 KB
         private int idxN;
 
-        Segment(long base, Path file, FileChannel ch) { this.base = base; this.file = file; this.ch = ch; }
+        Segment(long base, FileChannel ch) { this.base = base; this.ch = ch; }
 
         void index(long seq, int pos) {
             if (pos - lastIdxPos < 64 * 1024) return;
@@ -71,6 +72,9 @@ final class Journal implements AutoCloseable {
     private final ByteBuffer buf;                    // active segment image; position = append point
     private final ByteBuffer view;                   // scratch view of buf
     private final ByteBuffer scratch = ByteBuffer.allocateDirect(MAX_RECORD * 2);
+    private final ExecutorService housekeeper = Executors.newSingleThreadExecutor(
+            r -> Thread.ofPlatform().daemon().name("journal-housekeeper").unstarted(r));
+    private volatile IOException housekeepingError;
     private final CRC32C crc = new CRC32C();
     private final ArrayList<Segment> segs = new ArrayList<>();
     private Segment active;
@@ -167,29 +171,60 @@ final class Journal implements AutoCloseable {
         if (fsync) active.ch.force(false);
     }
 
+    /**
+     * Starts a new segment. Only the file creation happens here. Writing the snapshot and unlinking old
+     * segments take milliseconds, and done on this thread they were the whole p99 (see docs/NOTES.md), so
+     * the housekeeper does them, in order: a segment is deleted only after its successor's snapshot exists.
+     */
     private void roll() throws IOException {
         flush();
-        openNew(nextSeq);
-        while (segs.size() > maxSegments) deleteSegment(segs.remove(0));
+        long base = nextSeq;
+        byte[] snap = producers.encode(epochs);
+        openNew(base);
+        List<Segment> old = new ArrayList<>();
+        while (segs.size() > maxSegments) old.add(segs.remove(0));
+        for (Segment s : old) s.ch.close();
+        housekeeper.execute(() -> {
+            try {
+                writeSnap(base, snap);
+                for (Segment s : old) deleteFiles(s.base);
+            } catch (IOException e) {
+                housekeepingError = e;
+            }
+        });
+        if (housekeepingError != null) throw housekeepingError;
     }
 
     private void openNew(long base) throws IOException {
-        Path f = dir.resolve(String.format("%020d.log", base));
-        Path snap = snapFile(base), tmp = snap.resolveSibling("snap.tmp");
-        Files.write(tmp, producers.encode(epochs));
-        Files.move(tmp, snap, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-        active = new Segment(base, f, FileChannel.open(f, CREATE, READ, WRITE));
+        Path f = logFile(base);
+        active = new Segment(base, FileChannel.open(f, CREATE, READ, WRITE));
         segs.add(active);
         buf.clear();
         flushed = 0;
     }
 
+    private void writeSnap(long base, byte[] snap) throws IOException {
+        Path f = snapFile(base), tmp = f.resolveSibling("snap.tmp");
+        Files.write(tmp, snap);
+        Files.move(tmp, f, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+    }
+
+    /** Waits for the housekeeper, so that what is on disk is what this object thinks is on disk. */
+    private void settle() throws IOException {
+        try {
+            housekeeper.submit(() -> {}).get();
+        } catch (Exception e) {
+            throw new IOException(e);
+        }
+        if (housekeepingError != null) throw housekeepingError;
+    }
+
+    private Path logFile(long base) { return dir.resolve(String.format("%020d.log", base)); }
     private Path snapFile(long base) { return dir.resolve(String.format("%020d.snap", base)); }
 
-    private void deleteSegment(Segment s) throws IOException {
-        s.ch.close();
-        Files.deleteIfExists(s.file);
-        Files.deleteIfExists(snapFile(s.base));
+    private void deleteFiles(long base) throws IOException {
+        Files.deleteIfExists(logFile(base));
+        Files.deleteIfExists(snapFile(base));
     }
 
     // ---------------------------------------------------------------- read
@@ -290,17 +325,20 @@ final class Journal implements AutoCloseable {
 
     /** Discards everything and restarts at base with the leader's producer table. */
     void reset(long base, byte[] snap) throws IOException {
-        for (Segment s : segs) deleteSegment(s);
+        settle();
+        for (Segment s : segs) { s.ch.close(); deleteFiles(s.base); }
         segs.clear();
         nextSeq = base;
         producers.decode(snap, epochs);
+        writeSnap(base, snap);
         openNew(base);
     }
 
-    byte[] snapshotOfOldest() throws IOException { return Files.readAllBytes(snapFile(firstSeq())); }
+    byte[] snapshotOfOldest() throws IOException { settle(); return Files.readAllBytes(snapFile(firstSeq())); }
 
     /** Rebuilds all state by scanning the files. Stops at the first bad record or after maxSeq. */
     private void recover(long maxSeq) throws IOException {
+        settle();
         for (Segment s : segs) s.ch.close();
         segs.clear();
         List<Path> files = new ArrayList<>();
@@ -311,6 +349,7 @@ final class Journal implements AutoCloseable {
             nextSeq = 1;
             producers.clear();
             epochs.clear();
+            writeSnap(1, producers.encode(epochs));
             openNew(1);
             return;
         }
@@ -320,11 +359,10 @@ final class Journal implements AutoCloseable {
             long base = baseOf(f);
             if (segs.isEmpty()) nextSeq = base;
             if (stop || (base > maxSeq && !segs.isEmpty())) {   // past the cut
-                Files.deleteIfExists(f);
-                Files.deleteIfExists(snapFile(base));
+                deleteFiles(base);
                 continue;
             }
-            Segment s = new Segment(base, f, FileChannel.open(f, READ, WRITE));
+            Segment s = new Segment(base, FileChannel.open(f, READ, WRITE));
             segs.add(s);
             buf.clear();
             while (buf.hasRemaining()) if (s.ch.read(buf, buf.position()) <= 0) break;
@@ -378,6 +416,8 @@ final class Journal implements AutoCloseable {
 
     @Override public void close() throws IOException {
         flush();
+        settle();
+        housekeeper.shutdown();
         for (Segment s : segs) s.ch.close();
     }
 }

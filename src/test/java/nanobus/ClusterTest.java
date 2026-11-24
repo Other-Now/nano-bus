@@ -194,6 +194,51 @@ class ClusterTest {
         assertExactly(s.got, 0, 1, 200);
     }
 
+    @Test void aDivergentTailIsCutWhenTheOldLeaderRejoins() throws Exception {
+        startBoth();
+        Publisher p = publisher(1);
+        send(p, 0, T, 100, 50);
+        drain(p);
+        int epoch = a.role.epoch();
+        a.close();
+        a = null;
+        // As if the old leader had appended 30 more records that never reached the standby.
+        try (Journal j = new Journal(dir.resolve("A/shard0"), 1 << 20, 1000, false)) {
+            ByteBuffer body = ByteBuffer.allocateDirect(50);
+            for (int i = 1; i <= 30; i++) j.append(epoch, 1, 100 + i, 0, body, 0, 1, 50);
+        }
+        await("B leads", () -> b.isLeader());
+        send(p, 0, T, 200, 80);
+        drain(p);
+        a = new Broker(cfg("A"));
+        await("A is back in sync", b::standbyInSync);
+        a.close();
+        b.close();
+        a = b = null;
+        assertEquals("identical, 300 records", JournalDiff.compare(dir.resolve("A"), dir.resolve("B"), 2));
+    }
+
+    @Test void aStandbyThatHasNotCaughtUpIsNotInSync() throws Exception {
+        a = new Broker(cfg("A"));
+        await("A leads", a::isLeader);
+        Publisher p = publisher(1);
+        send(p, 0, T, 1000, 50);
+        drain(p);
+        List<Socket> fake = new ArrayList<>();
+        for (int i = 0; i < 2; i++) {                 // says hello on both shards and then acks only seq 1
+            Socket s = new Socket("127.0.0.1", aPort + i);
+            fake.add(s);
+            s.getOutputStream().write(ByteBuffer.allocate(29).putInt(24).put(Proto.REPL_HELLO)
+                    .putInt(0).putLong(1).putLong(0).putInt(0).array());
+            s.getOutputStream().write(ByteBuffer.allocate(13).putInt(8).put(Proto.REPL_ACK).putLong(i == 0 ? 1 : 0).array());
+        }
+        long until = System.nanoTime() + 1_000_000_000L;
+        while (System.nanoTime() < until) assertFalse(a.standbyInSync());
+        for (Socket s : fake) s.close();
+        send(p, 0, T, 100, 50);
+        drain(p);                                     // and it does not block the leader for ever
+    }
+
     @Test void nothingIsAckedOrDeliveredBeforeTheStandbyHasIt() throws Exception {
         startBoth();
         Publisher p = publisher(1);

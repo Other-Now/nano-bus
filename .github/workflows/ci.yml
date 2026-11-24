@@ -55,7 +55,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { tag: latency, args: "--rates 50000,100000,200000,300000,500000 --seconds 20 --reps 2" }
+          - { tag: latency, args: "--rates 50000,100000,200000,300000,500000 --seconds 20 --reps 3" }
           - { tag: latency-solo, args: "--rates 100000,300000,500000 --seconds 20 --reps 2 --solo" }
           - { tag: latency-fsync, args: "--rates 20000,100000 --seconds 20 --fsync" }
           - { tag: gc-heapcache, args: "--rates 100000 --seconds 30 --warmup 18 --reps 3 --gcs G1,Parallel,Shenandoah,ZGC,GenZGC --heap 1g --heap-cache 1000000" }
