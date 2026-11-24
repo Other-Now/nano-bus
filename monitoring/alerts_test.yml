@@ -1,0 +1,65 @@
+rule_files: [alerts.yml]
+evaluation_interval: 1s
+tests:
+  - interval: 1s
+    name: a quiet topic fires, a busy one and a never-used one do not
+    input_series:
+      - { series: 'nanobus_topic_published_total{topic="md.NSE"}', values: '0+100x60 6000x40' }
+      - { series: 'nanobus_topic_published_total{topic="md.BSE"}', values: '0+100x100' }
+      - { series: 'nanobus_topic_published_total{topic="md.OLD"}', values: '500x100' }
+    alert_rule_test:
+      - { eval_time: 60s, alertname: StalledPublisher, exp_alerts: [] }
+      - eval_time: 85s
+        alertname: StalledPublisher
+        exp_alerts:
+          - exp_labels: { severity: ticket, topic: md.NSE }
+            exp_annotations: { summary: "Topic md.NSE stopped publishing" }
+
+  - interval: 1s
+    name: lag must hold for 10 s
+    input_series:
+      - { series: 'nanobus_consumer_lag{conn="3"}', values: '0x10 60000x5 0x10 60000x30' }
+    alert_rule_test:
+      - { eval_time: 16s, alertname: ConsumerLagging, exp_alerts: [] }
+      - eval_time: 45s
+        alertname: ConsumerLagging
+        exp_alerts:
+          - exp_labels: { severity: ticket, conn: "3" }
+            exp_annotations: { summary: "Subscriber 3 is 60000 messages behind" }
+
+  - interval: 1s
+    name: a one-second failover does not page, a dead cluster does
+    input_series:
+      - { series: 'nanobus_leader{instance="a"}', values: '1x20 0x60' }
+      - { series: 'nanobus_leader{instance="b"}', values: '0x21 1x20 0x40' }
+    alert_rule_test:
+      - { eval_time: 23s, alertname: NoLeader, exp_alerts: [] }
+      - eval_time: 60s
+        alertname: NoLeader
+        exp_alerts:
+          - exp_labels: { severity: page }
+            exp_annotations: { summary: "No broker holds the lease: publishers are blocked" }
+
+  - interval: 1s
+    name: direct memory that climbs fires, a flat pool does not
+    input_series:
+      - { series: 'jvm_direct_used_bytes{instance="leaky"}', values: '20000000+5000000x200' }
+      - { series: 'jvm_direct_used_bytes{instance="ok"}', values: '300000000x200' }
+    alert_rule_test:
+      - eval_time: 150s
+        alertname: DirectMemoryGrowing
+        exp_alerts:
+          - exp_labels: { severity: ticket, instance: leaky }
+            exp_annotations: { summary: "Off-heap memory is climbing: check for connections that are never released" }
+
+  - interval: 1s
+    name: one broken invariant is enough
+    input_series:
+      - { series: 'nanobus_producer_gaps_total{shard="0"}', values: '0x30 1x30' }
+    alert_rule_test:
+      - { eval_time: 20s, alertname: ReplicationInvariantBroken, exp_alerts: [] }
+      - eval_time: 40s
+        alertname: ReplicationInvariantBroken
+        exp_alerts:
+          - exp_labels: { severity: page, shard: "0" }
+            exp_annotations: { summary: "Committed data was lost or rewritten" }

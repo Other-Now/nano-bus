@@ -1,0 +1,57 @@
+groups:
+  - name: nano-bus
+    rules:
+      - alert: NoLeader
+        expr: sum(nanobus_leader) < 1 or absent(nanobus_leader)
+        for: 5s
+        labels: { severity: page }
+        annotations: { summary: "No broker holds the lease: publishers are blocked" }
+
+      - alert: TwoLeaders
+        # Both can report 1 for one renewal period during a failover. Longer means the witness is not being asked.
+        expr: sum(nanobus_leader) > 1
+        for: 10s
+        labels: { severity: page }
+        annotations: { summary: "Two brokers report leadership" }
+
+      - alert: StandbyOutOfSync
+        expr: nanobus_leader == 1 and nanobus_standby_in_sync == 0
+        for: 15s
+        labels: { severity: page }
+        annotations: { summary: "Running on one copy: the next failure stops the cluster" }
+
+      - alert: StalledPublisher
+        # Per topic: it was moving in the last 5 minutes and has not moved for 10 s.
+        expr: >
+          rate(nanobus_topic_published_total[10s]) == 0
+          and rate(nanobus_topic_published_total[5m]) > 0
+        for: 5s
+        labels: { severity: ticket }
+        annotations: { summary: "Topic {{ $labels.topic }} stopped publishing" }
+
+      - alert: ConsumerLagging
+        expr: nanobus_consumer_lag > 50000
+        for: 10s
+        labels: { severity: ticket }
+        annotations: { summary: "Subscriber {{ $labels.conn }} is {{ $value }} messages behind" }
+
+      - alert: ConsumerMayHitRetention
+        # Lag divided by how fast it grows, against what the journal still holds, is the real question;
+        # a growing lag for a minute is the early sign.
+        expr: deriv(nanobus_consumer_lag[1m]) > 100 and nanobus_consumer_lag > 10000
+        for: 1m
+        labels: { severity: ticket }
+        annotations: { summary: "Subscriber {{ $labels.conn }} falls further behind every second" }
+
+      - alert: ReplicationInvariantBroken
+        # Both must stay 0 for ever: a gap means an acked message is gone, a truncation means a committed one is.
+        expr: increase(nanobus_producer_gaps_total[5m]) > 0 or increase(nanobus_truncated_committed_total[5m]) > 0
+        labels: { severity: page }
+        annotations: { summary: "Committed data was lost or rewritten" }
+
+      - alert: DirectMemoryGrowing
+        # The leak signature: direct memory climbs while the heap does not.
+        expr: deriv(jvm_direct_used_bytes[1m]) > 500000 and jvm_direct_used_bytes > 1e8
+        for: 30s
+        labels: { severity: ticket }
+        annotations: { summary: "Off-heap memory is climbing: check for connections that are never released" }

@@ -1,0 +1,121 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  PROM: 2.53.2
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "21", cache: maven }
+      - run: mvn -B -q verify
+      - uses: actions/upload-artifact@v4
+        with: { name: jar, path: target/nano-bus.jar }
+
+  chaos:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { mode: safe, seconds: 300 }
+          - { mode: naive, seconds: 90 }
+          - { mode: nodedup, seconds: 90 }
+    name: chaos ${{ matrix.mode }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "21" }
+      - uses: actions/download-artifact@v4
+        with: { name: jar, path: target }
+      - run: java -Xmx256m -cp target/nano-bus.jar nanobus.Main chaos --mode ${{ matrix.mode }} --seconds ${{ matrix.seconds }} --rate 20000 --out results/ci
+      - if: always()
+        run: |
+          { echo '```'; cat results/ci/*.json; echo '```'; } >> $GITHUB_STEP_SUMMARY
+          tail -n 40 work/chaos-*/*.out
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: "chaos-${{ matrix.mode }}", path: results/ci }
+
+  bench:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { tag: latency, args: "--rates 50000,100000,200000,300000,500000 --seconds 20 --reps 2" }
+          - { tag: latency-solo, args: "--rates 100000,300000,500000 --seconds 20 --reps 2 --solo" }
+          - { tag: latency-fsync, args: "--rates 20000,100000 --seconds 20 --fsync" }
+          - { tag: gc-heapcache, args: "--rates 100000 --seconds 30 --warmup 18 --reps 3 --gcs G1,Parallel,Shenandoah,ZGC,GenZGC --heap 1g --heap-cache 1000000" }
+          - { tag: gc-offheap, args: "--rates 100000 --seconds 30 --warmup 10 --reps 2 --gcs G1,Parallel,Shenandoah,ZGC,GenZGC --heap 1g" }
+    name: bench ${{ matrix.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "21" }
+      - uses: actions/download-artifact@v4
+        with: { name: jar, path: target }
+      - run: java -Xmx256m -cp target/nano-bus.jar nanobus.Main bench ${{ matrix.args }} --tag ${{ matrix.tag }} --out results/ci
+      - run: cat results/ci/*.md >> $GITHUB_STEP_SUMMARY
+      - uses: actions/upload-artifact@v4
+        with: { name: "bench-${{ matrix.tag }}", path: results/ci }
+
+  leak:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "21" }
+      - uses: actions/download-artifact@v4
+        with: { name: jar, path: run }
+      - name: Planted leak until the broker dies, then the same load without it
+        working-directory: run
+        run: |
+          for m in "--leak --tag churn-leak" "--pool off --tag churn-nopool" "--tag churn-pooled"; do
+            echo "== $m"
+            java -Xmx96m -cp nano-bus.jar nanobus.Main churn --seconds 45 --per-second 60 --out ../results/ci $m
+          done | tee ../churn.txt
+      - name: Hunt the leak with JDK tools
+        working-directory: run
+        run: bash ../scripts/leak-hunt.sh ../results/ci/leak
+      - run: |
+          { echo '```'; cat churn.txt results/ci/leak/REPORT.txt; echo '```'; } >> $GITHUB_STEP_SUMMARY
+          grep -q sessionsById results/ci/leak/REPORT.txt
+          cp churn.txt results/ci/
+          rm -f results/ci/leak/oldobjects.txt
+      - uses: actions/upload-artifact@v4
+        with: { name: leak, path: results/ci }
+
+  alerts:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "21" }
+      - uses: actions/download-artifact@v4
+        with: { name: jar, path: target }
+      - name: Prometheus
+        run: |
+          curl -sSL https://github.com/prometheus/prometheus/releases/download/v$PROM/prometheus-$PROM.linux-amd64.tar.gz | tar xz
+          echo "$PWD/prometheus-$PROM.linux-amd64" >> $GITHUB_PATH
+      - run: promtool check rules monitoring/alerts.yml && promtool test rules monitoring/alerts_test.yml
+      - run: bash scripts/alert-e2e.sh results/ci
+      - run: cat results/ci/alerts.txt >> $GITHUB_STEP_SUMMARY
+      - uses: actions/upload-artifact@v4
+        with: { name: alerts, path: results/ci }
